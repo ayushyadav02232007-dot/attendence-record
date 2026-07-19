@@ -7,5 +7,11 @@ RUN apt-get update && apt-get install -y libsqlite3-dev \
 # Copy your local PHP files into the container's web directory
 COPY . /var/www/html/
 
+# Create the data directory if it doesn't exist
+RUN mkdir -p /var/www/html/data
+
+# Grant full read/write permissions to the web server user (www-data) for the data folder
+RUN chown -R www-data:www-data /var/www/html/data && chmod -R 777 /var/www/html/data
+
 # Expose port 80 for web traffic
 EXPOSE 80
