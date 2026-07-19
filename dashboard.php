@@ -7,9 +7,9 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
     exit();
 }
 
-//$db = new PDO('sqlite:portal.db');
+$db = new PDO('sqlite:portal.db');
 // Saves the database in a secure cloud storage folder that never wipes out
-$db = new PDO('sqlite:/var/www/html/data/portal.db');
+//$db = new PDO('sqlite:/var/www/html/data/portal.db');
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 $student_id = $_SESSION['user_id'];
