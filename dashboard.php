@@ -1,88 +1,167 @@
 <?php
 session_start();
-if (!isset($_SESSION['student_id'])) {
+
+// Security Check: Kick out anyone who isn't logged in as a student
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
     header("Location: index.php");
     exit();
 }
 
-$conn = new mysqli("localhost", "root", "", "school_portal");
-$student_id = $_SESSION['student_id'];
+//$db = new PDO('sqlite:portal.db');
+// Saves the database in a secure cloud storage folder that never wipes out
+$db = new PDO('sqlite:/var/www/html/data/portal.db');
+$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-// Fetch Total Sessions
-$total_stmt = $conn->prepare("SELECT COUNT(*) as total FROM attendance WHERE student_id = ?");
-$total_stmt->bind_param("i", $student_id);
-$total_stmt->execute();
-$total_days = $total_stmt->get_result()->fetch_assoc()['total'];
+$student_id = $_SESSION['user_id'];
+$full_name = $_SESSION['full_name'];
 
-// Fetch Attended Sessions
-$present_stmt = $conn->prepare("SELECT COUNT(*) as present FROM attendance WHERE student_id = ? AND status = 'Present'");
-$present_stmt->bind_param("i", $student_id);
-$present_stmt->execute();
-$present_days = $present_stmt->get_result()->fetch_assoc()['present'];
+// Fetch all unique subjects currently registered dynamically in the database 
+$subjects = $db->query("SELECT subject_name FROM subjects ORDER BY subject_name ASC")->fetchAll(PDO::FETCH_COLUMN);
+$subject_stats = [];
 
-// Compute Percentage Rate
-$percentage = ($total_days > 0) ? round(($present_days / $total_days) * 100, 1) : 0;
+// Calculate individual metrics for each subject dynamically
+foreach ($subjects as $sub) {
+    $total_stmt = $db->prepare("SELECT COUNT(*) FROM attendance WHERE student_id = ? AND subject = ?");
+    $total_stmt->execute([$student_id, $sub]);
+    $t_days = $total_stmt->fetchColumn();
 
-// Fetch Recent History Logs
-$log_stmt = $conn->prepare("SELECT date, status FROM attendance WHERE student_id = ? ORDER BY date DESC LIMIT 8");
-$log_stmt->bind_param("i", $student_id);
-$log_stmt->execute();
-$logs = $log_stmt->get_result();
+    $present_stmt = $db->prepare("SELECT COUNT(*) FROM attendance WHERE student_id = ? AND subject = ? AND status = 'Present'");
+    $present_stmt->execute([$student_id, $sub]);
+    $p_days = $present_stmt->fetchColumn();
+
+    $pct = ($t_days > 0) ? round(($p_days / $t_days) * 100) : 0;
+
+    $subject_stats[$sub] = [
+        'total' => $t_days,
+        'present' => $p_days,
+        'percentage' => $pct
+    ];
+}
+
+// Calculate Overall Combined Metrics
+$overall_total_stmt = $db->prepare("SELECT COUNT(*) FROM attendance WHERE student_id = ?");
+$overall_total_stmt->execute([$student_id]);
+$overall_total = $overall_total_stmt->fetchColumn();
+
+$overall_present_stmt = $db->prepare("SELECT COUNT(*) FROM attendance WHERE student_id = ? AND status = 'Present'");
+$overall_present_stmt->execute([$student_id]);
+$overall_present = $overall_present_stmt->fetchColumn();
+
+$overall_percentage = ($overall_total > 0) ? round(($overall_present / $overall_total) * 100) : 0;
+
+// Fetch all history entries, including the subject names
+$logs_stmt = $db->prepare("SELECT date, subject, status FROM attendance WHERE student_id = ? ORDER BY date DESC");
+$logs_stmt->execute([$student_id]);
+$logs = $logs_stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Attendance Dashboard</title>
+    <title>Student Portal - Dashboard</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        .subject-grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+            margin-bottom: 30px;
+        }
+        .subject-card {
+            background: #fdfdfd;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        .subject-card h4 {
+            margin: 0 0 10px 0;
+            color: #1976d2;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 5px;
+        }
+        .sub-stat {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        .sub-pct {
+            font-weight: bold;
+            font-size: 16px;
+            color: #333;
+            margin-top: 8px;
+            border-top: 1px dashed #eee;
+            padding-top: 8px;
+        }
+    </style>
 </head>
 <body>
 
     <div class="dashboard-card">
         <div class="dashboard-header">
-            <h2>Welcome back, <?php echo htmlspecialchars($_SESSION['full_name']); ?></h2>
+            <h2>Welcome, <?php echo htmlspecialchars($full_name); ?></h2>
             <a href="logout.php" class="logout-link">Sign Out</a>
         </div>
 
+        <!-- Section A: Overall Combined Score Overview -->
+        <h3 class="table-title" style="margin-top:10px;">Overall Summary</h3>
         <div class="metrics-grid">
             <div class="metric-box">
-                <h3>Total Classes</h3>
-                <div class="value"><?php echo $total_days; ?></div>
+                <h4>Total Classes (All)</h4>
+                <p class="metric-value"><?php echo $overall_total; ?></p>
             </div>
             <div class="metric-box">
-                <h3>Days Present</h3>
-                <div class="value"><?php echo $present_days; ?></div>
+                <h4>Total Present</h4>
+                <p class="metric-value" style="color: #2e7d32;"><?php echo $overall_present; ?></p>
             </div>
             <div class="metric-box">
-                <h3>Attendance Rate</h3>
-                <div class="value percentage"><?php echo $percentage; ?>%</div>
+                <h4>Total Attendance %</h4>
+                <p class="metric-value"><?php echo $overall_percentage; ?>%</p>
             </div>
         </div>
 
-        <h3 class="table-title">Recent Attendance Log</h3>
+        <!-- Section B: Subject-Wise Performance Breakdown -->
+        <h3 class="table-title" style="margin-top: 25px;">Subject Wise Breakdown</h3>
+        <div class="subject-grid-container">
+            <?php foreach ($subject_stats as $name => $stats): ?>
+                <div class="subject-card">
+                    <h4><?php echo $name; ?></h4>
+                    <div class="sub-stat"><span>Total Classes:</span> <strong><?php echo $stats['total']; ?></strong></div>
+                    <div class="sub-stat"><span>Attended:</span> <strong style="color: #2e7d32;"><?php echo $stats['present']; ?></strong></div>
+                    <div class="sub-stat sub-pct"><span>Attendance:</span> <span><?php echo $stats['percentage']; ?>%</span></div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+
+        <!-- Section C: Comprehensive Log Tracking Data Table -->
+        <h3 class="table-title">Your Attendance History</h3>
         <table class="attendance-table">
             <thead>
                 <tr>
                     <th>Date</th>
-                    <th>Status Mapping</th>
+                    <th>Subject Name</th>
+                    <th>Status</th>
                 </tr>
             </thead>
             <tbody>
-                <?php if ($logs->num_rows > 0): ?>
-                    <?php while($row = $logs->fetch_assoc()): ?>
+                <?php if (count($logs) > 0): ?>
+                    <?php foreach($logs as $row): ?>
                     <tr>
                         <td><?php echo date("F j, Y", strtotime($row['date'])); ?></td>
+                        <td style="font-weight: 500; color: #333;"><?php echo htmlspecialchars($row['subject']); ?></td>
                         <td>
-                            <span class="status-badge <?php echo $row['status']; ?>">
-                                <?php echo $row['status']; ?>
+                            <span class="status-badge <?php echo strtolower($row['status']); ?>">
+                                <?php echo htmlspecialchars($row['status']); ?>
                             </span>
                         </td>
                     </tr>
-                    <?php endwhile; ?>
+                    <?php endforeach; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="2" style="text-align: center; color: #999;">No attendance records found.</td>
+                        <td colspan="3" style="text-align: center; color: #999;">No attendance tracking records found.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -91,9 +170,3 @@ $logs = $log_stmt->get_result();
 
 </body>
 </html>
-<?php
-$total_stmt->close();
-$present_stmt->close();
-$log_stmt->close();
-$conn->close();
-?>
